@@ -1,6 +1,7 @@
 package product
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,11 +19,16 @@ var allowedURLChars = regexp.MustCompile(`^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]
 var allowedHost = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 
 type Handler struct {
-	repo *Repository
+	repo     *Repository
+	uploader ImageUploader
 }
 
-func NewHandler(repo *Repository) *Handler {
-	return &Handler{repo: repo}
+type ImageUploader interface {
+	UploadImage(ctx context.Context, imageSource string) (string, error)
+}
+
+func NewHandler(repo *Repository, uploader ImageUploader) *Handler {
+	return &Handler{repo: repo, uploader: uploader}
 }
 
 func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
@@ -37,10 +43,23 @@ func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
+	if h.uploader == nil {
+		writeError(w, http.StatusInternalServerError, "image uploader is not configured")
+		return
+	}
+
 	input, ok := parseInput(w, r)
 	if !ok {
 		return
 	}
+
+	uploadedURL, err := h.uploader.UploadImage(r.Context(), input.ImageURL)
+	if err != nil {
+		sentry.CaptureException(err)
+		writeError(w, http.StatusBadGateway, "failed to upload image")
+		return
+	}
+	input.ImageURL = uploadedURL
 
 	p, err := h.repo.Create(r.Context(), input)
 	if err != nil {
@@ -53,6 +72,11 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
+	if h.uploader == nil {
+		writeError(w, http.StatusInternalServerError, "image uploader is not configured")
+		return
+	}
+
 	id := r.PathValue("id")
 	if _, err := uuid.Parse(id); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid product id")
@@ -63,6 +87,14 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	uploadedURL, err := h.uploader.UploadImage(r.Context(), input.ImageURL)
+	if err != nil {
+		sentry.CaptureException(err)
+		writeError(w, http.StatusBadGateway, "failed to upload image")
+		return
+	}
+	input.ImageURL = uploadedURL
 
 	p, err := h.repo.Update(r.Context(), id, input)
 	if err != nil {

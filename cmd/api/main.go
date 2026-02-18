@@ -16,6 +16,7 @@ import (
 
 	"store-serverless/internal/auth"
 	"store-serverless/internal/db"
+	"store-serverless/internal/media"
 	"store-serverless/internal/observability"
 	"store-serverless/internal/product"
 )
@@ -27,6 +28,7 @@ func main() {
 
 	databaseURL := mustEnv("DATABASE_URL")
 	jwtSecret := mustEnv("JWT_SECRET")
+	cloudinaryURL := mustEnv("CLOUDINARY_URL")
 	port := envOrDefault("PORT", "8080")
 
 	if err := observability.InitSentry(os.Getenv("SENTRY_DSN"), envOrDefault("APP_ENV", "development")); err != nil {
@@ -67,7 +69,13 @@ func main() {
 	}
 
 	productRepo := product.NewRepository(database)
-	productHandler := product.NewHandler(productRepo)
+	cloudinaryClient, err := media.NewCloudinary(cloudinaryURL)
+	if err != nil {
+		logger.Error("init_cloudinary_failed", map[string]any{"error": err.Error()})
+		os.Exit(1)
+	}
+	productHandler := product.NewHandler(productRepo, cloudinaryClient)
+	mediaUploadHandler := media.NewUploadHandler(cloudinaryClient)
 
 	loginLimiter := auth.NewLoginRateLimiter(
 		envIntOrDefault("LOGIN_RATE_LIMIT_MAX", 10),
@@ -77,11 +85,13 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("POST /auth/login", loginLimiter.Middleware(http.HandlerFunc(authHandler.Login)))
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
+	mux.HandleFunc("POST /auth/logout", authHandler.Logout)
 	mux.HandleFunc("GET /health", healthHandler(database))
 	mux.HandleFunc("GET /products", productHandler.ListProducts)
 	mux.Handle("POST /products", auth.Middleware(jwtSecret, http.HandlerFunc(productHandler.CreateProduct)))
 	mux.Handle("PUT /products/{id}", auth.Middleware(jwtSecret, http.HandlerFunc(productHandler.UpdateProduct)))
 	mux.Handle("DELETE /products/{id}", auth.Middleware(jwtSecret, http.HandlerFunc(productHandler.DeleteProduct)))
+	mux.Handle("POST /media/upload", auth.Middleware(jwtSecret, http.HandlerFunc(mediaUploadHandler.Upload)))
 
 	handler := observability.RecoverMiddleware(logger, observability.RequestLoggingMiddleware(logger, mux))
 

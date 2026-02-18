@@ -275,4 +275,20 @@ func (r *Repository) RotateRefreshToken(ctx context.Context, rawOldToken, rawNew
 	return userID, nil
 }
 
+func (r *Repository) RevokeRefreshToken(ctx context.Context, rawToken string) error {
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE auth_refresh_tokens
+		SET revoked_at = COALESCE(revoked_at, $2)
+		WHERE token_hash = $1
+	`, tokenHash, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("revoke refresh token: %w", err)
+	}
+
+	return nil
+}
+
 var ErrInvalidRefreshToken = errors.New("invalid refresh token")

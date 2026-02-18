@@ -7,10 +7,12 @@ API CRUD de productos con migraciones automáticas, auth por username/password (
 - `GET /health` -> estado de servicio (DB check)
 - `POST /auth/login` -> devuelve `access_token` + `refresh_token`
 - `POST /auth/refresh` -> rota `refresh_token` y devuelve nuevos tokens
+- `POST /auth/logout` -> revoca `refresh_token` actual
 - `GET /products` -> público
 - `POST /products` -> requiere `Authorization: Bearer <access_token>`
 - `PUT /products/{id}` -> requiere token
 - `DELETE /products/{id}` -> requiere token
+- `POST /media/upload` -> requiere token, sube archivo y devuelve `secure_url`
 
 ## Seguridad aplicada
 
@@ -18,6 +20,7 @@ API CRUD de productos con migraciones automáticas, auth por username/password (
 - Bloqueo temporal por intentos fallidos por username (`LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCK_MINUTES`).
 - Access token corto (default 15 min) + refresh token con rotación (default 7 días).
 - Validación estricta de payload y `image_url` (solo `http/https`, ASCII, sin espacios ni caracteres raros).
+- En `POST /products` y `PUT /products/{id}` la imagen se sube a Cloudinary y se guarda `secure_url`.
 
 ## Variables de entorno
 
@@ -25,6 +28,7 @@ API CRUD de productos con migraciones automáticas, auth por username/password (
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
 PORT=8080
 JWT_SECRET=replace_with_long_random_secret
+CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
 ADMIN_USERNAME=admin_secure_name
 ADMIN_PASSWORD=replace_with_strong_password
 

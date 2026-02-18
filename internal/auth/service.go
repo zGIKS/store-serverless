@@ -136,6 +136,15 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Tokens, err
 	}, nil
 }
 
+func (s *Service) Logout(ctx context.Context, refreshToken string) error {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return ErrInvalidRefreshToken
+	}
+
+	return s.repo.RevokeRefreshToken(ctx, refreshToken)
+}
+
 func (s *Service) issueTokens(ctx context.Context, userID string) (Tokens, error) {
 	access, expiresIn, err := s.issueAccessToken(userID)
 	if err != nil {

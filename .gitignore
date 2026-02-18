@@ -1,0 +1,22 @@
+# Ignore environment variables
+.env
+
+# Build / binaries
+/bin/
+/build/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+coverage.out
+
+# Dependency directories
+/vendor/
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+*.log

@@ -31,6 +31,10 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+type logoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var body loginRequest
 	decoder := json.NewDecoder(r.Body)
@@ -98,6 +102,34 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	var body logoutRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	body.RefreshToken = strings.TrimSpace(body.RefreshToken)
+	if body.RefreshToken == "" {
+		writeError(w, http.StatusBadRequest, "invalid refresh token")
+		return
+	}
+
+	if err := h.service.Logout(r.Context(), body.RefreshToken); err != nil {
+		if errors.Is(err, ErrInvalidRefreshToken) {
+			writeError(w, http.StatusUnauthorized, "invalid refresh token")
+			return
+		}
+		sentry.CaptureException(err)
+		writeError(w, http.StatusInternalServerError, "failed to logout")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
