@@ -7,7 +7,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"store-serverless/internal/app"
+	"store-serverless/app"
 )
 
 var (
