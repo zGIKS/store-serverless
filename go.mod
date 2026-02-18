@@ -1,6 +1,6 @@
 module store-serverless
 
-go 1.25.7
+go 1.24.0
 
 require (
 	github.com/getsentry/sentry-go v0.42.0

@@ -17,6 +17,12 @@ type Repository struct {
 	db *sql.DB
 }
 
+type CleanupResult struct {
+	DeletedRefreshTokens int64 `json:"deleted_refresh_tokens"`
+	DeletedLoginAttempts int64 `json:"deleted_login_attempts"`
+	DeletedIPLimits      int64 `json:"deleted_ip_limits"`
+}
+
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -289,6 +295,158 @@ func (r *Repository) RevokeRefreshToken(ctx context.Context, rawToken string) er
 	}
 
 	return nil
+}
+
+func (r *Repository) AllowLoginIP(ctx context.Context, ip string, maxHits int, window time.Duration, now time.Time) (bool, time.Duration, error) {
+	threshold := now.UTC().Add(-window)
+
+	var hits int
+	var windowStartedAt time.Time
+	err := r.db.QueryRowContext(ctx, `
+		WITH upsert AS (
+			INSERT INTO auth_login_ip_limits (ip, window_started_at, hits, updated_at)
+			VALUES ($1, $2, 1, $2)
+			ON CONFLICT (ip) DO UPDATE
+			SET
+				hits = CASE
+					WHEN auth_login_ip_limits.window_started_at <= $3 THEN 1
+					ELSE auth_login_ip_limits.hits + 1
+				END,
+				window_started_at = CASE
+					WHEN auth_login_ip_limits.window_started_at <= $3 THEN $2
+					ELSE auth_login_ip_limits.window_started_at
+				END,
+				updated_at = $2
+			RETURNING hits, window_started_at
+		)
+		SELECT hits, window_started_at FROM upsert
+	`, ip, now.UTC(), threshold).Scan(&hits, &windowStartedAt)
+	if err != nil {
+		return false, 0, fmt.Errorf("upsert login ip rate limit: %w", err)
+	}
+
+	if hits <= maxHits {
+		return true, 0, nil
+	}
+
+	retryAfter := windowStartedAt.Add(window).Sub(now.UTC())
+	if retryAfter < time.Second {
+		retryAfter = time.Second
+	}
+
+	return false, retryAfter, nil
+}
+
+func (r *Repository) CleanupStaleAuthData(ctx context.Context, refreshRetention time.Duration, loginAttemptRetention time.Duration, batchSize int) (CleanupResult, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	if refreshRetention <= 0 {
+		refreshRetention = 14 * 24 * time.Hour
+	}
+	if loginAttemptRetention <= 0 {
+		loginAttemptRetention = 30 * 24 * time.Hour
+	}
+
+	refreshCutoff := time.Now().UTC().Add(-refreshRetention)
+	loginCutoff := time.Now().UTC().Add(-loginAttemptRetention)
+
+	deletedRefreshTokens, err := r.deleteStaleRefreshTokens(ctx, refreshCutoff, batchSize)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+
+	deletedLoginAttempts, err := r.deleteStaleLoginAttempts(ctx, loginCutoff, batchSize)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+
+	deletedIPLimits, err := r.deleteStaleIPLimits(ctx, loginCutoff, batchSize)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+
+	return CleanupResult{
+		DeletedRefreshTokens: deletedRefreshTokens,
+		DeletedLoginAttempts: deletedLoginAttempts,
+		DeletedIPLimits:      deletedIPLimits,
+	}, nil
+}
+
+func (r *Repository) deleteStaleRefreshTokens(ctx context.Context, cutoff time.Time, batchSize int) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		WITH stale AS (
+			SELECT id
+			FROM auth_refresh_tokens
+			WHERE expires_at < NOW() OR (revoked_at IS NOT NULL AND revoked_at < $1)
+			ORDER BY created_at ASC
+			LIMIT $2
+		)
+		DELETE FROM auth_refresh_tokens t
+		USING stale
+		WHERE t.id = stale.id
+	`, cutoff, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("delete stale refresh tokens: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("stale refresh tokens rows affected: %w", err)
+	}
+
+	return affected, nil
+}
+
+func (r *Repository) deleteStaleLoginAttempts(ctx context.Context, cutoff time.Time, batchSize int) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		WITH stale AS (
+			SELECT username
+			FROM auth_login_attempts
+			WHERE updated_at < $1
+			  AND (locked_until IS NULL OR locked_until < NOW())
+			ORDER BY updated_at ASC
+			LIMIT $2
+		)
+		DELETE FROM auth_login_attempts t
+		USING stale
+		WHERE t.username = stale.username
+	`, cutoff, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("delete stale login attempts: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("stale login attempts rows affected: %w", err)
+	}
+
+	return affected, nil
+}
+
+func (r *Repository) deleteStaleIPLimits(ctx context.Context, cutoff time.Time, batchSize int) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		WITH stale AS (
+			SELECT ip
+			FROM auth_login_ip_limits
+			WHERE updated_at < $1
+			ORDER BY updated_at ASC
+			LIMIT $2
+		)
+		DELETE FROM auth_login_ip_limits t
+		USING stale
+		WHERE t.ip = stale.ip
+	`, cutoff, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("delete stale login ip limits: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("stale login ip limits rows affected: %w", err)
+	}
+
+	return affected, nil
 }
 
 var ErrInvalidRefreshToken = errors.New("invalid refresh token")

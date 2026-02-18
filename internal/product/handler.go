@@ -18,6 +18,8 @@ import (
 var allowedURLChars = regexp.MustCompile(`^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$`)
 var allowedHost = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 
+const maxJSONBodyBytes = 1 << 20
+
 type Handler struct {
 	repo     *Repository
 	uploader ImageUploader
@@ -132,6 +134,8 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseInput(w http.ResponseWriter, r *http.Request) (ProductInput, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+
 	var input ProductInput
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

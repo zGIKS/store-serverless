@@ -35,6 +35,15 @@ ADMIN_PASSWORD=replace_with_strong_password
 # Opcionales
 APP_ENV=production
 SENTRY_DSN=
+RUN_MIGRATIONS_ON_STARTUP=true
+CRON_SECRET=replace_with_long_random_secret
+AUTH_REFRESH_TOKEN_RETENTION_DAYS=14
+AUTH_LOGIN_ATTEMPT_RETENTION_DAYS=30
+AUTH_CLEANUP_BATCH_SIZE=500
+DB_MAX_OPEN_CONNS=10
+DB_MAX_IDLE_CONNS=5
+DB_CONN_MAX_LIFETIME_MINUTES=30
+DB_CONN_MAX_IDLE_TIME_MINUTES=10
 LOGIN_RATE_LIMIT_MAX=10
 LOGIN_RATE_LIMIT_WINDOW_SECONDS=60
 LOGIN_MAX_ATTEMPTS=5
@@ -49,6 +58,17 @@ REFRESH_TOKEN_TTL_HOURS=168
 go mod tidy
 go run ./cmd/api
 ```
+
+## Deploy en Vercel
+
+- El proyecto ya incluye `api/index.go` y `vercel.json` para enrutar todo a una sola función Go.
+- Configura en Vercel las mismas variables de entorno de la sección anterior.
+- Recomendado en Vercel: `RUN_MIGRATIONS_ON_STARTUP=false` y ejecutar migraciones fuera del request path.
+- Si quieres aplicar migraciones desde runtime, habilita `RUN_MIGRATIONS_ON_STARTUP=true` (puede aumentar cold start).
+- El cleanup diario de auth ya está configurado en `vercel.json` (04:00 UTC) hacia `GET /internal/maintenance/cleanup`.
+- Para que el cron sea seguro, define `CRON_SECRET` en Vercel (la plataforma enviará `Authorization: Bearer <CRON_SECRET>`).
+- El rate limit de login usa Postgres (`auth_login_ip_limits`), por lo que funciona de forma consistente en múltiples instancias serverless.
+- Ajusta el pool de DB con `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_LIFETIME_MINUTES` y `DB_CONN_MAX_IDLE_TIME_MINUTES` según tu plan de Neon.
 
 ## Login y uso
 

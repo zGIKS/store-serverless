@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "crons": [
+    {
+      "path": "/internal/maintenance/cleanup",
+      "schedule": "0 4 * * *"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/index"
+    }
+  ]
+}

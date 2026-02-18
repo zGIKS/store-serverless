@@ -1,22 +1,20 @@
 package auth
 
 import (
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 type LoginRateLimiter struct {
-	mu        sync.Mutex
-	maxHits   int
-	window    time.Duration
-	hitByIP   map[string][]time.Time
-	maxMemory int
+	repo    *Repository
+	maxHits int
+	window  time.Duration
 }
 
-func NewLoginRateLimiter(maxHits int, window time.Duration) *LoginRateLimiter {
+func NewLoginRateLimiter(repo *Repository, maxHits int, window time.Duration) *LoginRateLimiter {
 	if maxHits <= 0 {
 		maxHits = 10
 	}
@@ -25,10 +23,9 @@ func NewLoginRateLimiter(maxHits int, window time.Duration) *LoginRateLimiter {
 	}
 
 	return &LoginRateLimiter{
-		maxHits:   maxHits,
-		window:    window,
-		hitByIP:   make(map[string][]time.Time),
-		maxMemory: 5000,
+		repo:    repo,
+		maxHits: maxHits,
+		window:  window,
 	}
 }
 
@@ -37,7 +34,11 @@ func (l *LoginRateLimiter) Middleware(next http.Handler) http.Handler {
 		ip := clientIP(r)
 		now := time.Now().UTC()
 
-		allowed, retryAfter := l.allow(ip, now)
+		allowed, retryAfter, err := l.allow(r, ip, now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to enforce login rate limit")
+			return
+		}
 		if !allowed {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
 			writeError(w, http.StatusTooManyRequests, "too many login attempts")
@@ -48,41 +49,17 @@ func (l *LoginRateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-func (l *LoginRateLimiter) allow(ip string, now time.Time) (bool, time.Duration) {
-	threshold := now.Add(-l.window)
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	hits := l.hitByIP[ip]
-	filtered := make([]time.Time, 0, len(hits)+1)
-	for _, hit := range hits {
-		if hit.After(threshold) {
-			filtered = append(filtered, hit)
-		}
+func (l *LoginRateLimiter) allow(r *http.Request, ip string, now time.Time) (bool, time.Duration, error) {
+	if l.repo == nil {
+		return true, 0, nil
 	}
 
-	if len(filtered) >= l.maxHits {
-		retryAfter := filtered[0].Add(l.window).Sub(now)
-		if retryAfter < time.Second {
-			retryAfter = time.Second
-		}
-		l.hitByIP[ip] = filtered
-		return false, retryAfter
+	allowed, retryAfter, err := l.repo.AllowLoginIP(r.Context(), ip, l.maxHits, l.window, now)
+	if err != nil {
+		return false, 0, err
 	}
 
-	filtered = append(filtered, now)
-	l.hitByIP[ip] = filtered
-
-	if len(l.hitByIP) > l.maxMemory {
-		for key, value := range l.hitByIP {
-			if len(value) == 0 || value[len(value)-1].Before(threshold) {
-				delete(l.hitByIP, key)
-			}
-		}
-	}
-
-	return true, 0
+	return allowed, retryAfter, nil
 }
 
 func clientIP(r *http.Request) string {
@@ -98,6 +75,10 @@ func clientIP(r *http.Request) string {
 	}
 
 	if r.RemoteAddr != "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil && strings.TrimSpace(host) != "" {
+			return strings.TrimSpace(host)
+		}
 		return r.RemoteAddr
 	}
 

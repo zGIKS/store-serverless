@@ -14,6 +14,8 @@ import (
 
 var usernameRegex = regexp.MustCompile(`^[a-z0-9_.-]{3,32}$`)
 
+const maxJSONBodyBytes = 1 << 20
+
 type Handler struct {
 	service *Service
 }
@@ -36,6 +38,8 @@ type logoutRequest struct {
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+
 	var body loginRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -81,6 +85,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+
 	var body refreshRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -105,6 +111,8 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+
 	var body logoutRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
